@@ -25,153 +25,168 @@
       color: #fff;
       z-index: 999;
     }
+    #startButton {
+      position: absolute;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 1em 2em;
+      font-size: 1.2em;
+      z-index: 1000;
+      cursor: pointer;
+    }
   </style>
 </head>
 
 <body>
-<div id="loadingMessage">Пожалуйста, дайте доступ к камере и геолокации...</div>
+  <div id="loadingMessage">Пожалуйста, дайте доступ к камере и геолокации...</div>
+  <button id="startButton">Начать игру</button>
 
-<a-scene
-        embedded
-        vr-mode-ui="enabled: false"
-        renderer="logarithmicDepthBuffer: true;"
-        arjs="sourceType: webcam; debugUIEnabled: false; videoTexture: true;
-        trackingMethod: best;
-        faceUser: false;
-        locationEnabled: true;
-        locationMinAccuracy: 1000;"
-        cursor="rayOrigin: mouse"
-        raycaster="objects: .clickable"
-        collect-stars>
+  <a-scene
+          embedded
+          vr-mode-ui="enabled: false"
+          renderer="logarithmicDepthBuffer: true;"
+          arjs="sourceType: webcam; debugUIEnabled: false; videoTexture: true;
+          trackingMethod: best;
+          faceUser: false;
+          locationEnabled: true;
+          locationMinAccuracy: 1000;"
+          cursor="rayOrigin: mouse"
+          raycaster="objects: .clickable"
+          collect-stars>
 
-  <a-assets>
-    <!-- Модель звезды (та же самая, что и в вашем VR-примере) -->
-    <a-asset-item id="starModel" src="star.glb"></a-asset-item>
-    <!-- Фоновая музыка (по желанию) -->
-    <audio id="bgMusic" src="13. Summer (Nature's Crescendo).mp3" preload="auto"></audio>
-  </a-assets>
+    <a-assets>
+      <!-- Модель звезды (та же самая, что и в вашем VR-примере) -->
+      <a-asset-item id="starModel" src="star.glb"></a-asset-item>
+      <!-- Фоновая музыка (по желанию) -->
+      <audio id="bgMusic" src="13. Summer (Nature's Crescendo).mp3" preload="auto"></audio>
+    </a-assets>
 
-  <!-- Камера + AR-возможности -->
-  <a-entity camera
-            gps-camera="simulateAltitude: false"
-            position="0 0 0">
-    <!-- Звук, если нужно фоновое воспроизведение -->
-    <a-entity sound="src: #bgMusic; autoplay: true; loop: true"></a-entity>
-    <!-- Текст счета. Будет «прикреплён» к камере, виден всегда. -->
-    <a-entity id="scoreText"
-              position="0 -0.2 -1"
-              text="value: Score: 0; width: 2; color: #FFFF00">
+    <!-- Камера + AR-возможности -->
+    <a-entity camera
+              gps-camera="simulateAltitude: false"
+              position="0 0 0">
+      <!-- Фоновая музыка -->
+      <a-entity sound="src: #bgMusic; autoplay: true; loop: true"></a-entity>
+      <!-- Текст счета, прикреплённый к камере -->
+      <a-entity id="scoreText"
+                position="0 -0.2 -1"
+                text="value: Score: 0; width: 2; color: #FFFF00">
+      </a-entity>
     </a-entity>
-  </a-entity>
 
-</a-scene>
+  </a-scene>
 
-<script>
-  AFRAME.registerComponent('collect-stars', {
-    init: function () {
-      // Состояние игры
-      this.score = 0;
-      this.starCount = 5;  // Сколько звёзд хотим создать сразу
-      this.stars = [];
+  <script>
+    // По нажатию на кнопку запрашиваем разрешения на камеру и геолокацию
+    document.getElementById('startButton').addEventListener('click', function() {
+      // Запрос доступа к камере
+      navigator.mediaDevices.getUserMedia({ video: true })
+        .then(function(stream) {
+          console.log('Камера разрешена');
+        })
+        .catch(function(error) {
+          console.error('Ошибка доступа к камере: ', error);
+        });
 
-      // DOM-элемент для "Score"
-      this.scoreTextEl = null;
+      // Запрос доступа к геолокации
+      navigator.geolocation.getCurrentPosition(
+        function(position) {
+          console.log('Геолокация получена:', position);
+          // Скрываем кнопку после получения разрешений
+          document.getElementById('startButton').style.display = 'none';
+        },
+        function(error) {
+          console.error('Ошибка получения геолокации:', error);
+        }
+      );
+    });
 
-      // Когда GPS-камера готова (получены координаты), создадим звёздочки
-      window.addEventListener('gps-camera-update-position', e => {
-        const { position } = e.detail;
-        // position.coords.latitude, position.coords.longitude
-        // Создаём звёзды вокруг игрока
-        this.spawnStars(position.coords.latitude, position.coords.longitude);
-        document.getElementById('loadingMessage').style.display = 'none';
-      });
+    AFRAME.registerComponent('collect-stars', {
+      init: function () {
+        // Инициализация состояния игры
+        this.score = 0;
+        this.starCount = 5;  // Количество звёзд для генерации
+        this.stars = [];
 
-      // При клике по звезде - собираем её
-      this.onStarClick = this.onStarClick.bind(this);
-      this.el.sceneEl.addEventListener('star-clicked', this.onStarClick);
+        // Элемент для отображения счёта
+        this.scoreTextEl = document.querySelector('#scoreText');
 
-      // Ищем элемент "Score"
-      this.scoreTextEl = document.querySelector('#scoreText');
-    },
+        // При обновлении позиции камеры (GPS) создаём звёзды и скрываем сообщение загрузки
+        window.addEventListener('gps-camera-update-position', e => {
+          const { position } = e.detail;
+          this.spawnStars(position.coords.latitude, position.coords.longitude);
+          document.getElementById('loadingMessage').style.display = 'none';
+        });
 
-    // Создать несколько звёзд вокруг игрока
-    spawnStars: function (playerLat, playerLon) {
-      // Например, генерируем 5 звёзд, случайно разбросанных в радиусе 30-50 м
-      const randomPositions = this.randomPositionsAround(playerLat, playerLon, 30, 50, this.starCount);
+        // Обработчик клика по звезде
+        this.onStarClick = this.onStarClick.bind(this);
+        this.el.sceneEl.addEventListener('star-clicked', this.onStarClick);
+      },
 
-      randomPositions.forEach((pos) => {
-        const star = document.createElement('a-entity');
-        star.setAttribute('gps-entity-place', `latitude: ${pos.latitude}; longitude: ${pos.longitude};`);
-        star.setAttribute('gltf-model', '#starModel');
-        star.setAttribute('scale', '0.2 0.2 0.2');
-        star.setAttribute('rotation', '0 0 0');
-        star.setAttribute('animation__rot', 'property: rotation; to: 0 360 0; loop: true; dur: 4000');
-        star.setAttribute('clickable-star', '');
-        star.classList.add('clickable');
+      // Функция генерации звёзд вокруг игрока
+      spawnStars: function (playerLat, playerLon) {
+        const randomPositions = this.randomPositionsAround(playerLat, playerLon, 30, 50, this.starCount);
+        randomPositions.forEach((pos) => {
+          const star = document.createElement('a-entity');
+          star.setAttribute('gps-entity-place', `latitude: ${pos.latitude}; longitude: ${pos.longitude};`);
+          star.setAttribute('gltf-model', '#starModel');
+          star.setAttribute('scale', '0.2 0.2 0.2');
+          star.setAttribute('rotation', '0 0 0');
+          star.setAttribute('animation__rot', 'property: rotation; to: 0 360 0; loop: true; dur: 4000');
+          star.setAttribute('clickable-star', '');
+          star.classList.add('clickable');
 
-        this.el.appendChild(star);
-        this.stars.push(star);
-      });
-    },
+          this.el.appendChild(star);
+          this.stars.push(star);
+        });
+      },
 
-    // Когда звезда кликнута
-    onStarClick: function(evt) {
-      // Удаляем звезду со сцены
-      const starEl = evt.detail.target;
-      if (starEl && starEl.parentNode) {
-        starEl.parentNode.removeChild(starEl);
+      // Обработчик клика по звезде
+      onStarClick: function(evt) {
+        const starEl = evt.detail.target;
+        if (starEl && starEl.parentNode) {
+          starEl.parentNode.removeChild(starEl);
+        }
+        this.score++;
+        this.updateScoreText();
+      },
+
+      // Обновление текста счёта
+      updateScoreText: function() {
+        if (this.scoreTextEl) {
+          this.scoreTextEl.setAttribute('text', 'value', 'Score: ' + this.score);
+        }
+      },
+
+      // Генерация случайных координат в заданном радиусе (в метрах)
+      randomPositionsAround: function (lat, lon, minDist, maxDist, count) {
+        const deg2rad = (deg) => deg * (Math.PI / 180);
+        const meterInDeg = 1 / 111111;
+        const positions = [];
+        for (let i = 0; i < count; i++) {
+          const dist = Math.random() * (maxDist - minDist) + minDist;
+          const angle = Math.random() * 360;
+          const offsetLat = dist * Math.cos(deg2rad(angle)) * meterInDeg;
+          const offsetLon = dist * Math.sin(deg2rad(angle)) * meterInDeg;
+          positions.push({
+            latitude: lat + offsetLat,
+            longitude: lon + offsetLon
+          });
+        }
+        return positions;
       }
-      // Увеличиваем счёт
-      this.score++;
-      // Обновляем текст счёта
-      this.updateScoreText();
-    },
+    });
 
-    // Обновить текст «Score»
-    updateScoreText: function() {
-      if (this.scoreTextEl) {
-        this.scoreTextEl.setAttribute('text', 'value', 'Score: ' + this.score);
-      }
-    },
-
-    // Генерация случайных координат lat/lon в некотором радиусе (в метрах)
-    // (Упрощённый вариант, не учитывает кривизну Земли и др. нюансы)
-    randomPositionsAround: function (lat, lon, minDist, maxDist, count) {
-      // deg2rad и рад/deg для перевода между градусами и радианами
-      const deg2rad = (deg) => deg * (Math.PI / 180);
-      const rad2deg = (rad) => rad * (180 / Math.PI);
-
-      // Примерно 1 градус широты ~ 111111 м
-      // 1 градус долготы зависит от широты, но для простоты возьмём то же (работает плохо на полюсах, но для демо пойдёт)
-      const meterInDeg = 1 / 111111;
-
-      const positions = [];
-      for (let i = 0; i < count; i++) {
-        // Рандомим расстояние и угол
-        const dist = Math.random() * (maxDist - minDist) + minDist;
-        const angle = Math.random() * 360; // в градусах
-        const offsetLat = dist * Math.cos(deg2rad(angle)) * meterInDeg;
-        const offsetLon = dist * Math.sin(deg2rad(angle)) * meterInDeg;
-
-        positions.push({
-          latitude: lat + offsetLat,
-          longitude: lon + offsetLon
+    // Компонент для обработки клика по звезде
+    AFRAME.registerComponent('clickable-star', {
+      init: function() {
+        this.el.addEventListener('click', () => {
+          this.el.sceneEl.emit('star-clicked', { target: this.el });
         });
       }
-      return positions;
-    }
-  });
-
-  // Компонент, который генерирует событие 'star-clicked' при клике
-  AFRAME.registerComponent('clickable-star', {
-    init: function() {
-      this.el.addEventListener('click', () => {
-        // Генерим кастомное событие, чтобы «collect-stars» обновил счёт
-        this.el.sceneEl.emit('star-clicked', { target: this.el });
-      });
-    }
-  });
-</script>
+    });
+  </script>
 
 </body>
 </html>
