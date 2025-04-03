@@ -7,67 +7,105 @@
     <script src="https://aframe.io/releases/1.2.0/aframe.min.js"></script>
     <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js"></script>
     <script>
-      // Компонент для обработки клика по звезде: удаляет объект и обновляет счёт
+      // Флаг, чтобы звёзды спавнились только один раз
+      let starsSpawned = false;
+
+      // Функция обновления счёта в HTML-оверлее
+      function updateScore(newScore) {
+        document.getElementById("score").innerText = "Score: " + newScore;
+      }
+
+      // Компонент для обработки клика/тапа по звезде:
       AFRAME.registerComponent('clickable-star', {
         init: function () {
-          this.el.addEventListener('click', () => {
+          const onClick = () => {
             // Удаляем звезду из сцены
-            this.el.parentNode.removeChild(this.el);
+            if(this.el.parentNode){
+              this.el.parentNode.removeChild(this.el);
+            }
             // Обновляем счёт
-            const scoreEl = document.querySelector('#scoreText');
-            let currentScore = parseInt(scoreEl.getAttribute('value').replace('Score: ', '')) || 0;
+            let currentScore = parseInt(document.getElementById("score").innerText.replace("Score: ", "")) || 0;
             currentScore++;
-            scoreEl.setAttribute('value', 'Score: ' + currentScore);
-          });
+            updateScore(currentScore);
+          };
+          this.el.addEventListener('click', onClick);
+          this.el.addEventListener('touchstart', onClick);
         }
       });
 
-      // Функция для динамического спавна звёзд вокруг пользователя
-      function spawnStarsAroundUser(numStars) {
+      // Функция для динамического спавна звёзд вокруг пользователя с учётом GPS
+      function spawnStarsAroundUser(numStars, userLat, userLon) {
         const scene = document.querySelector('a-scene');
-        // Получаем позицию камеры (если не установлена, принимаем (0,0,0))
-        const camera = document.querySelector('a-camera');
-        let camPos = camera.getAttribute('position') || { x: 0, y: 0, z: 0 };
-
         for (let i = 0; i < numStars; i++) {
-          // Случайный угол и радиус для расположения звезды вокруг камеры
+          // Случайный угол и радиус (в метрах)
           let angle = Math.random() * 2 * Math.PI;
           let radius = 2 + Math.random() * 3; // от 2 до 5 метров
-          let x = camPos.x + radius * Math.cos(angle);
-          let z = camPos.z + radius * Math.sin(angle);
-          let y = camPos.y; // на уровне камеры
 
-          // Создаем сущность звезды
+          // Смещения в метрах по осям (dx – восток, dz – север)
+          let dx = radius * Math.cos(angle);
+          let dz = radius * Math.sin(angle);
+
+          // Переводим смещения в разницу по координатам:
+          // 1 градус широты ≈ 111111 м; 1 градус долготы ≈ 111111 * cos(latitude) м
+          let newLat = userLat + (dz / 111111);
+          let newLon = userLon + (dx / (111111 * Math.cos(userLat * Math.PI/180)));
+
+          // Создаём сущность звезды, добавляем gps-entity-place для фиксации в пространстве
           let star = document.createElement('a-entity');
           star.setAttribute('gltf-model', 'star.glb');
           star.setAttribute('scale', '0.5 0.5 0.5');
-          star.setAttribute('position', `${x} ${y} ${z}`);
+          star.setAttribute('gps-entity-place', `latitude: ${newLat}; longitude: ${newLon}`);
           star.setAttribute('clickable-star', '');
+          // Добавляем класс для работы курсора
+          star.setAttribute('class', 'clickable');
+          // Анимация вращения звезды
           star.setAttribute('animation', 'property: rotation; to: 0 360 0; loop: true; dur: 3000');
-
+          
           scene.appendChild(star);
         }
       }
 
       window.onload = function() {
-        // После загрузки сцены спавним звёзды
-        const sceneEl = document.querySelector('a-scene');
-        sceneEl.addEventListener('loaded', () => {
-          spawnStarsAroundUser(10); // Спавним 10 звёзд
+        // Ожидаем, когда камера получит GPS-координаты
+        const camera = document.querySelector('a-camera');
+        camera.addEventListener('gps-camera-update-position', function(event) {
+          if (!starsSpawned) {
+            // event.detail содержит координаты: latitude и longitude
+            const { latitude, longitude } = event.detail;
+            spawnStarsAroundUser(10, latitude, longitude);
+            starsSpawned = true;
+          }
         });
-      }
+      };
     </script>
     <style>
       body { margin: 0; overflow: hidden; }
+      /* HTML-оверлей для отображения счёта */
+      #score {
+        position: fixed;
+        top: 10px;
+        left: 10px;
+        font-size: 24px;
+        color: white;
+        z-index: 100;
+        background: rgba(0,0,0,0.5);
+        padding: 5px 10px;
+        border-radius: 5px;
+      }
     </style>
   </head>
   <body>
+    <!-- HTML-оверлей для счёта -->
+    <div id="score">Score: 0</div>
     <!-- AR-сцена -->
     <a-scene embedded arjs="trackingMethod: best;">
-      <!-- Камера с поддержкой GPS (если необходимо) -->
-      <a-camera gps-camera>
-        <!-- Счёт, прикреплённый к камере, всегда виден перед пользователем -->
-        <a-text id="scoreText" value="Score: 0" position="0 -0.5 -1" scale="2 2 2" color="white"></a-text>
+      <!-- Камера с gps-camera и курсором -->
+      <a-camera gps-camera rotation-reader>
+        <a-cursor 
+          position="0 0 -1"
+          geometry="primitive: ring; radiusInner: 0.02; radiusOuter: 0.03"
+          material="color: white; shader: flat">
+        </a-cursor>
       </a-camera>
     </a-scene>
   </body>
