@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <title>AR Game with GPS and Falling Stars</title>
+
+  <!-- A-Frame 0.9.2 (для совместимости с physics-system) -->
+  <script src="https://aframe.io/releases/0.9.2/aframe.min.js"></script>
+
+  <!-- AR.js для location-based AR (gps-camera, gps-entity-place) -->
+  <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js"></script>
+
+  <!-- aframe-physics-system (версия 4.0.0) -->
+  <script src="https://cdn.jsdelivr.net/npm/aframe-physics-system@4.0.0/dist/aframe-physics-system.min.js"></script>
+
+  <script>
+    // Помощь: преобразование метров в градусы (примерное)
+    function metersToLat(meters) {
+      return meters / 111320;
+    }
+    function metersToLng(meters, latitude) {
+      return meters / (111320 * Math.cos(latitude * Math.PI / 180));
+    }
+
+    // Компонент для звезды, которую можно собрать.
+    AFRAME.registerComponent('collectible-listener', {
+      init: function() {
+        this.el.addEventListener('click', () => {
+          // Анимация подпрыгивания (опционально)
+          const pos = this.el.getAttribute('position');
+          this.el.setAttribute('animation__bounce', {
+            property: 'position',
+            to: `${pos.x} ${pos.y + 1} ${pos.z}`,
+            dur: 300,
+            easing: 'easeOutQuad'
+          });
+          // После анимации удаляем звезду и эмитим событие
+          setTimeout(() => {
+            if (this.el.parentNode) {
+              this.el.parentNode.removeChild(this.el);
+            }
+            this.el.sceneEl.emit('star-collected');
+          }, 300);
+        });
+      }
+    });
+
+    // Компонент, управляющий игровым процессом (спавн звёзд, счёт, проигрыш, падение звёзд)
+    AFRAME.registerComponent('star-spawner', {
+      schema: {
+        // Координаты "стола" (фиксированное место, где будет происходить игра)
+        tableLat: { type: 'number', default: 55.7558 },
+        tableLng: { type: 'number', default: 37.6173 }
+      },
+      init: function () {
+        this.score = 0;
+        this.starCount = 0;
+        this.maxStars = 10;
+        this.spawnInterval = 2000;
+        this.intervalFactor = 0.95;
+        this.gameOver = false;
+
+        this.scoreTextEl = document.querySelector('#scoreText');
+        this.resultTextEl = document.querySelector('#resultText');
+
+        this.onStarCollected = this.onStarCollected.bind(this);
+        this.el.addEventListener('star-collected', this.onStarCollected);
+        this.onKeyDown = this.onKeyDown.bind(this);
+        window.addEventListener('keydown', this.onKeyDown);
+
+        this.scheduleNextSpawn();
+      },
+
+      // Планирование следующего спауна
+      scheduleNextSpawn: function () {
+        if (this.gameOver) return;
+        setTimeout(() => {
+          this.spawnStar();
+        }, this.spawnInterval);
+      },
+
+      // Спавн игровой звезды на столе, используя gps-entity-place
+      spawnStar: function () {
+        if (this.gameOver) return;
+
+        const starEl = document.createElement('a-entity');
+        starEl.classList.add('star');
+        starEl.classList.add('clickable');
+        starEl.setAttribute('collectible-listener', '');
+        starEl.setAttribute('gltf-model', '#starModel');
+        starEl.setAttribute('scale', '0.2 0.2 0.2');
+        starEl.setAttribute('animation', 'property: rotation; from: 0 0 0; to: 0 360 0; dur: 4000; loop: true');
+
+        // Генерируем небольшое смещение в метрах относительно стола
+        const offsetX = this.random(-2, 2);
+        const offsetZ = this.random(-2, 2);
+        const latOffset = metersToLat(offsetX);
+        const lngOffset = metersToLng(offsetZ, this.data.tableLat);
+        const starLat = this.data.tableLat + latOffset;
+        const starLng = this.data.tableLng + lngOffset;
+
+        // Используем gps-entity-place для установки позиции в реальном мире
+        starEl.setAttribute('gps-entity-place', `latitude: ${starLat}; longitude: ${starLng}`);
+
+        this.el.appendChild(starEl);
+        this.starCount++;
+        if (this.starCount >= this.maxStars) {
+          this.doGameOver();
+          return;
+        }
+        this.spawnInterval *= this.intervalFactor;
+        this.scheduleNextSpawn();
+      },
+
+      // Обработка события, когда звезда собрана
+      onStarCollected: function () {
+        if (this.gameOver) return;
+        this.score++;
+        this.starCount--;
+        this.updateScoreText();
+      },
+
+      updateScoreText: function () {
+        this.scoreTextEl.setAttribute('text', 'value', 'Score: ' + this.score);
+      },
+
+      // При проигрыше: вывод сообщения и спавн падающих звёзд
+      doGameOver: function () {
+        this.gameOver = true;
+        const message = `You lose! Your score: ${this.score}\nPress R to restart`;
+        this.resultTextEl.setAttribute('text', 'value', message);
+        this.spawnFallingStars(10);
+      },
+
+      // Спавнит заданное число падающих звёзд сверху. Они будут добавлены с gps-entity-place и с локальным позиционированием, чтобы имитировать падение.
+      spawnFallingStars: function (count) {
+        for (let i = 0; i < count; i++) {
+          const starEl = document.createElement('a-entity');
+          starEl.setAttribute('gltf-model', '#starModel');
+          starEl.setAttribute('scale', '0.2 0.2 0.2');
+
+          // Смещение относительно стола (небольшое случайное смещение в метрах)
+          const offsetX = this.random(-3, 3);
+          const offsetZ = this.random(-3, 3);
+          const latOffset = metersToLat(offsetX);
+          const lngOffset = metersToLng(offsetZ, this.data.tableLat);
+          const starLat = this.data.tableLat + latOffset;
+          const starLng = this.data.tableLng + lngOffset;
+          // Для падающих звёзд устанавливаем gps-entity-place...
+          starEl.setAttribute('gps-entity-place', `latitude: ${starLat}; longitude: ${starLng}`);
+
+          // А затем задаём локальное положение, чтобы имитировать, что они начинаются "сверху" (относительно родителя)
+          // Если спавним их внутри сущности "table", позиция будет относительной к столу.
+          starEl.setAttribute('position', '0 5 0');
+          // Анимация падения (опускается до 0,0,0)
+          starEl.setAttribute('animation', 'property: position; to: 0 0 0; dur: 3000; easing: easeInQuad');
+
+          // Добавляем физику для реального падения (если физическая симуляция работает)
+          starEl.setAttribute('dynamic-body', 'shape: box; mass: 1;');
+          this.el.appendChild(starEl);
+        }
+      },
+
+      resetGame: function () {
+        const oldStars = this.el.querySelectorAll('.star');
+        oldStars.forEach(star => star.parentNode.removeChild(star));
+
+        this.gameOver = false;
+        this.score = 0;
+        this.starCount = 0;
+        this.spawnInterval = 2000;
+        this.updateScoreText();
+        this.resultTextEl.setAttribute('text', 'value', '');
+        this.scheduleNextSpawn();
+
+        const fallen = this.el.querySelectorAll('[dynamic-body]');
+        fallen.forEach(e => e.parentNode.removeChild(e));
+      },
+
+      onKeyDown: function (evt) {
+        if ((evt.key === 'r' || evt.key === 'R') && this.gameOver) {
+          this.resetGame();
+        }
+      },
+
+      random: function (min, max) {
+        return Math.random() * (max - min) + min;
+      }
+    });
+  </script>
+
+  <style>
+    body, html, #gameScene {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      padding: 0;
+    }
+  </style>
+</head>
+<body>
+<a-scene id="gameScene" gps-camera="simulateAltitude: false; simulateLatitude: 55.7558; simulateLongitude: 37.6173;" physics="debug: false">
+  <a-assets>
+    <img id="skyTexture" src="sky.jpg">
+    <a-asset-item id="starModel" src="star.glb"></a-asset-item>
+    <audio id="bgMusic" src="13. Summer (Nature's Crescendo).mp3" preload="auto"></audio>
+  </a-assets>
+
+  <!-- Небо -->
+  <a-sky src="#skyTexture"></a-sky>
+
+  <!-- Свет -->
+  <a-entity light="type: ambient; intensity: 0.6"></a-entity>
+  <a-entity light="type: directional; intensity: 0.6" position="0 5 5"></a-entity>
+
+  <!-- Виртуальный стол (поверхность для игры) -->
+  <a-entity id="table" gps-entity-place="latitude: 55.7558; longitude: 37.6173;"
+            geometry="primitive: plane; width: 2; height: 2"
+            material="color: #ccc; opacity: 0.8;"
+            rotation="-90 0 0">
+  </a-entity>
+
+  <!-- Камера с gps-camera, отслеживающая позицию пользователя -->
+  <a-entity camera look-controls>
+    <a-entity cursor="fuse: false; rayOrigin: mouse" raycaster="objects: .clickable"></a-entity>
+
+    <!-- Интерфейс: счет и сообщение -->
+    <a-entity id="scoreText"
+              text="value: Score: 0; color: #FFF; width: 3"
+              position="0.5 -0.5 -1">
+    </a-entity>
+    <a-entity id="resultText"
+              text="value: ; color: #FF0; width: 6; whiteSpace: pre"
+              position="0.5 -0.5 -2">
+    </a-entity>
+
+    <!-- Фоновая музыка -->
+    <a-entity sound="src: #bgMusic; autoplay: true; loop: true"></a-entity>
+  </a-entity>
+
+  <!-- Сущность с игровым компонентом. Ее можно прикрепить к столу, чтобы звезды появлялись относительно его координат -->
+  <a-entity star-spawner></a-entity>
+
+</a-scene>
+</body>
+</html>
